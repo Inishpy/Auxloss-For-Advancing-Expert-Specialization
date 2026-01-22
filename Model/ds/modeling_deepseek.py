@@ -544,27 +544,23 @@ class DeepseekMoE(nn.Module):
         if self.training:
             hidden_states = hidden_states.repeat_interleave(self.num_experts_per_tok, dim=0)
             y = torch.empty_like(hidden_states)
-            expert_outputs = []
+            
             for i, expert in enumerate(self.experts):
                 mask = flat_topk_idx == i
                 if mask.any():
                     expert_out = expert(hidden_states[mask])
                     y[mask] = expert_out
-                    expert_outputs.append(expert_out)
-            
-            # Compute orthogonality loss
-            if len(expert_outputs) > 1:
-                # Stack all expert outputs [num_tokens*top_k, hidden_dim]
-                stacked_outputs = torch.cat(expert_outputs, dim=0)
-                # Reshape to [num_tokens, top_k, hidden_dim]
-                expert_outputs_reshaped = stacked_outputs.view(-1, self.num_experts_per_tok, stacked_outputs.size(-1))
+            if self.num_experts_per_tok > 1:
+                expert_outputs_reshaped = y.view(-1, self.num_experts_per_tok, y.size(-1))
+                
                 ortho_loss_value = self.gate.compute_ortho_loss(expert_outputs_reshaped)
                 device = ortho_loss_value.device
                 
                 ortho_loss = ortho_loss_value * self.gate.ortho_loss_weight.to(device)
                 gate_loss = gate_loss + ortho_loss
-                self.gate.writer.add_scalar(f"Loss/ortho/MoElayer_{self.gate.layer_idx}", ortho_loss.item() , step_cnt)
-                self.gate.writer.add_scalar(f"Loss/gate_loss/MoElayer_{self.gate.layer_idx}", gate_loss.item(), step_cnt)
+                if step_cnt % logging_steps == 0:
+                    self.gate.writer.add_scalar(f"Loss/ortho/MoElayer_{self.gate.layer_idx}", ortho_loss.item() , step_cnt)
+                    self.gate.writer.add_scalar(f"Loss/gate_loss/MoElayer_{self.gate.layer_idx}", gate_loss.item(), step_cnt)
             
             y = (y.view(*topk_weight.shape, -1) * topk_weight.unsqueeze(-1)).sum(dim=1)
             y = y.view(*orig_shape)
