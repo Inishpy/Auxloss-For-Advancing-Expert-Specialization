@@ -676,27 +676,26 @@ class DeepseekV3MoE(nn.Module):
         topk_idx, topk_weight, gate_loss = self.gate(hidden_states)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         flat_topk_idx = topk_idx.view(-1)
+        
         if self.training:
             hidden_states = hidden_states.repeat_interleave(self.num_experts_per_tok, dim=0)
             y = torch.empty_like(hidden_states)
-            expert_outputs = []
+            
             for i, expert in enumerate(self.experts):
                 mask = flat_topk_idx == i
                 if mask.any():
                     expert_out = expert(hidden_states[mask])
                     y[mask] = expert_out
-                    expert_outputs.append(expert_out)
             
-            # Compute orthogonality loss
-            if len(expert_outputs) > 1:
-                # Stack all expert outputs [num_tokens*top_k, hidden_dim]
-                stacked_outputs = torch.cat(expert_outputs, dim=0)
+            if self.num_experts_per_tok > 1:
                 # Reshape to [num_tokens, top_k, hidden_dim]
-                expert_outputs_reshaped = stacked_outputs.view(-1, self.num_experts_per_tok, stacked_outputs.size(-1))
+                expert_outputs_reshaped = y.view(-1, self.num_experts_per_tok, y.shape[-1])
+                
                 ortho_loss_value = self.gate.compute_ortho_loss(expert_outputs_reshaped)
                 device = ortho_loss_value.device
                 ortho_loss = ortho_loss_value * self.gate.ortho_loss_weight.to(device)
                 gate_loss = gate_loss + ortho_loss
+                
                 self.gate.writer.add_scalar(f"Loss/ortho/MoElayer_{self.gate.layer_idx}", ortho_loss_value.item() , step_cnt)
                 self.gate.writer.add_scalar(f"Loss/gate_loss/MoElayer_{self.gate.layer_idx}", gate_loss.item(), step_cnt)
             
@@ -705,8 +704,10 @@ class DeepseekV3MoE(nn.Module):
             y = AddAuxiliaryLoss.apply(y, gate_loss)
         else:
             y = self.moe_infer(hidden_states, topk_idx, topk_weight).view(*orig_shape)
+            
         if self.config.n_shared_experts is not None:
             y = y + self.shared_experts(identity)
+            
         return y
 
     @torch.no_grad()
