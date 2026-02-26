@@ -13,10 +13,10 @@ import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
 import torch
 
-MODEL_NAME = "Moonlight-16B-A3B"
+MODEL_NAME = "deepseek-ai/deepseek-moe-16b-chat"  #moonshotai/Moonlight-16B-A3B
 REF = "debug"
 # pretrained_model_path = './Models/deepseek-ai/deepseek-moe-16b-chat'
-pretrained_model_path = './Models/moonshotai/' + MODEL_NAME
+pretrained_model_path =  MODEL_NAME #'./Models/moonshotai/' + MODEL_NAME moonshotai/Moonlight-16B-A3B
 
 timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 import os
@@ -34,8 +34,16 @@ print("logging dir train.py:", logging_dir)
 tokenizer = AutoTokenizer.from_pretrained(pretrained_model_path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(pretrained_model_path, trust_remote_code=True, device_map="auto", torch_dtype=torch.bfloat16)
 
-df = pd.read_json('./Dataset/gsm8k_train.json')
-ds = Dataset.from_pandas(df)
+# df = pd.read_json('./Dataset/gsm8k_train.json')
+# ds = Dataset.from_pandas(df)
+from datasets import load_dataset
+from datasets.download.download_config import DownloadConfig
+config = DownloadConfig(max_retries=3)
+ds = load_dataset("gsm8k", "main", download_config=config)
+
+# save to json file
+for split in ds.keys():
+    ds[split].to_json(split + '.json', orient='records', lines=True)
 
 from peft import LoraConfig, TaskType, get_peft_model
 
@@ -54,8 +62,11 @@ print(model)
 def process_func(example):
     MAX_LENGTH = 512 # The longer the better. Due to computing resource limitations, we used 512. Ideally, it should be stretched to 4k or 8k for best results.
     input_ids, attention_mask, labels = [], [], []
-    instruction = tokenizer(f"<|start_header_id|>user<|end_header_id|>\n\n{example['instruction'] + example['input']}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n", add_special_tokens=False) 
-    response = tokenizer(f"{example['output']}<|eot_id|>", add_special_tokens=False)
+    instruction = tokenizer(
+        f"<|start_header_id|>user<|end_header_id|>\n\n{example['question']}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+        add_special_tokens=False,
+    )
+    response = tokenizer(f"{example['answer']}<|eot_id|>", add_special_tokens=False)
     input_ids = instruction["input_ids"] + response["input_ids"] + [tokenizer.pad_token_id]
     attention_mask = instruction["attention_mask"] + response["attention_mask"] + [1]
     labels = [-100] * len(instruction["input_ids"]) + response["input_ids"] + [tokenizer.pad_token_id]  
@@ -69,7 +80,7 @@ def process_func(example):
         "labels": labels
     }
     
-tokenized_id = ds.map(process_func, remove_columns=ds.column_names)    
+tokenized_id = ds.map(process_func, remove_columns=ds["train"].column_names)
 
 training_args = TrainingArguments(
     output_dir='./results',              # output dir
@@ -88,7 +99,7 @@ print("logging_dir:", training_args.logging_dir)
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_id,
+    train_dataset=tokenized_id["train"],
     data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, padding=True),
 )
 trainer.train()
