@@ -166,3 +166,6 @@ flan_task/
 Output/
 *.json
 timestamp
+
+checkpoints_flan/
+timestamp*
