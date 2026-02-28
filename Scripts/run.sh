@@ -13,7 +13,7 @@ if [ -z "${CONDA_EXE}" ]; then
 fi
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate ADS
+conda activate ADS-moe
 
 # ── Configurable defaults (override via environment variables) ───────────────
 LORA_RANK="${LORA_RANK:-16}"
@@ -67,7 +67,7 @@ run_training() {
     echo "[GPU $gpu_id] Starting task: $prefix  (file: $file)"
 
     CUDA_VISIBLE_DEVICES="$gpu_id" \
-    conda run -n ADS python "$SCRIPT_DIR/Train/batch_train.py" \
+    conda run -n ADS-moe python "$SCRIPT_DIR/Train/batch_train.py" \
         --model_name_or_path    "$MODEL_NAME" \
         --dataset_name          "$file" \
         --output_prefix         "$OUTPUT_PREFIX" \
